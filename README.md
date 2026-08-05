@@ -107,8 +107,3 @@ https://marko.racic.rs/TNT
 ## License
 
 TNT is released under the [MIT License](LICENSE).
-
-## Author
-
-Marko Racić  
-https://marko.racic.rs
