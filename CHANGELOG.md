@@ -1,5 +1,13 @@
 # TNT Changelog
 
+## 2.5.0
+
+- Adds IP Information to Diagnostics
+- Accepts an IPv4 address or hostname
+- Uses the current Public IP when input is left empty
+- Displays country, region, city, ISP, ASN, timezone and approximate coordinates
+- Uses ipwho.is over HTTPS without adding external dependencies
+
 ## 2.4.7
 
 - Reduced the initial Terminal window from 143×50 to 90×32

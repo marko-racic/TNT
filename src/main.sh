@@ -14,7 +14,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 GRAY='\033[0;90m'
 
-APP_VERSION="2.4.9"
+APP_VERSION="2.5.0"
 
 APP_SUPPORT_DIR="$HOME/Library/Application Support/TNT"
 LOG_DIR="$HOME/Library/Logs"
@@ -1965,7 +1965,7 @@ diagnostics_terminal_rows() {
 
 
 diagnostics_output_start_row() {
-    echo 28
+    echo 29
 }
 
 begin_diagnostics_scroll_region() {
@@ -2068,20 +2068,21 @@ draw_diagnostics_fixed_screen() {
     printf '\033[16;1H5  Flush DNS Cache'
     printf '\033[17;1H6  Renew DHCP Lease'
     printf '\033[18;1H7  TCP Port Test'
-    printf '\033[19;1HB  Back'
+    printf '\033[19;1H8  IP Information'
+    printf '\033[20;1HB  Back'
 
-    printf '\033[21;1H%b' "$CYAN"
+    printf '\033[22;1H%b' "$CYAN"
     repeat_char "$width" "-"
     printf "%b" "$RESET"
 
-    printf '\033[22;1H%bPress a key%b' "$GRAY" "$RESET"
+    printf '\033[23;1H%bPress a key%b' "$GRAY" "$RESET"
 
-    for row in 23 24 25 26 27; do
+    for row in 24 25 26 27 28; do
         printf '\033[%d;1H\033[2K' "$row"
     done
 
     clear_diagnostics_result_area
-    printf '\033[22;1H'
+    printf '\033[23;1H'
 }
 
 
@@ -2089,28 +2090,23 @@ draw_diagnostics_output_header() {
     local title="$1"
     local target="${2:-}"
     local width
-
     width=$(( $(get_terminal_columns) - 1 ))
     (( width < 76 )) && width=76
-
-    printf '\033[24;1H\033[2K'
-    printf '\033[24;1H%b' "$CYAN$BOLD"
+    printf '\033[25;1H\033[2K'
+    printf '\033[25;1H%b' "$CYAN$BOLD"
     repeat_char "$width" "="
     printf "%b" "$RESET"
-
-    printf '\033[25;1H\033[2K'
-    if [[ -n "$target" ]]; then
-        printf '\033[25;1H%s — %s' "$title" "$target"
-    else
-        printf '\033[25;1H%s' "$title"
-    fi
-
     printf '\033[26;1H\033[2K'
-    printf '\033[26;1H%b' "$CYAN"
+    if [[ -n "$target" ]]; then
+        printf '\033[26;1H%s — %s' "$title" "$target"
+    else
+        printf '\033[26;1H%s' "$title"
+    fi
+    printf '\033[27;1H\033[2K'
+    printf '\033[27;1H%b' "$CYAN"
     repeat_char "$width" "-"
     printf "%b" "$RESET"
-
-    printf '\033[27;1H\033[2K'
+    printf '\033[28;1H\033[2K'
     clear_diagnostics_result_area
     begin_diagnostics_scroll_region
 }
@@ -2119,11 +2115,9 @@ draw_diagnostics_output_header() {
 
 finish_inline_diagnostic() {
     local ignored=""
-
     end_diagnostics_scroll_region
-    printf '\033[27;1H\033[2K'
-    printf '\033[27;1H%bPress any key to return to Diagnostics.%b' "$GRAY" "$RESET"
-
+    printf '\033[28;1H\033[2K'
+    printf '\033[28;1H%bPress any key to return to Diagnostics.%b' "$GRAY" "$RESET"
     /bin/stty sane < /dev/tty 2>/dev/null || true
     IFS= read -r -s -n 1 ignored < /dev/tty || true
 }
@@ -2132,16 +2126,12 @@ finish_inline_diagnostic() {
 
 prompt_below_diagnostics_menu() {
     local prompt_label="$1"
-
     DIAGNOSTIC_INPUT=""
-
     end_diagnostics_scroll_region
     /bin/stty sane < /dev/tty 2>/dev/null || true
-
-    printf '\033[22;1H\033[2K'
     printf '\033[23;1H\033[2K'
-    printf '\033[23;1H'
-
+    printf '\033[24;1H\033[2K'
+    printf '\033[24;1H'
     IFS= read -r -p "${prompt_label}: " DIAGNOSTIC_INPUT < /dev/tty || true
 }
 
@@ -2352,13 +2342,113 @@ diagnostic_tcp_port_test() {
 }
 
 
+
+json_value_simple() {
+    local json="$1"
+    local key="$2"
+    printf '%s' "$json" |
+        /usr/bin/sed -nE 's/.*"'$key'"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' |
+        /usr/bin/head -n 1
+}
+
+json_number_simple() {
+    local json="$1"
+    local key="$2"
+    printf '%s' "$json" |
+        /usr/bin/sed -nE 's/.*"'$key'"[[:space:]]*:[[:space:]]*(-?[0-9.]+).*/\1/p' |
+        /usr/bin/head -n 1
+}
+
+diagnostic_ip_information() {
+    local input target_ip response
+    local country region city isp asn timezone lat lon ip_type success
+
+    prompt_below_diagnostics_menu "IP address or host (Enter = Public IP)"
+    input="$DIAGNOSTIC_INPUT"
+
+    if [[ -z "$input" ]]; then
+        target_ip="$PUBLIC_IP"
+    elif [[ "$input" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        target_ip="$input"
+    else
+        target_ip=$(resolve_target_ipv4 "$input")
+    fi
+
+    if [[ -z "$target_ip" || "$target_ip" == "Unavailable" ]]; then
+        printf '\033[24;1H\033[2K'
+        printf '\033[24;1H%bUnable to resolve IP address.%b' "$RED" "$RESET"
+        /bin/sleep 1.5
+        return
+    fi
+
+    draw_diagnostics_output_header "IP INFORMATION" "$target_ip"
+
+    response=$(/usr/bin/curl -4 -fsS --max-time 6 \
+        "https://ipwho.is/${target_ip}?fields=success,ip,type,country,region,city,latitude,longitude,connection,timezone" \
+        2>/dev/null || true)
+
+    if [[ -z "$response" ]]; then
+        echo -e "${RED}${BOLD}● IP information service unavailable${RESET}"
+        echo
+        echo "Could not retrieve data from ipwho.is."
+        finish_inline_diagnostic
+        return
+    fi
+
+    success=$(printf '%s' "$response" | /usr/bin/grep -o '"success":[^,}]*' | /usr/bin/head -n1)
+    if [[ "$success" == *"false"* ]]; then
+        echo -e "${RED}${BOLD}● Lookup failed${RESET}"
+        echo
+        printf '%s\n' "$response"
+        finish_inline_diagnostic
+        return
+    fi
+
+    ip_type=$(json_value_simple "$response" "type")
+    country=$(json_value_simple "$response" "country")
+    region=$(json_value_simple "$response" "region")
+    city=$(json_value_simple "$response" "city")
+    lat=$(json_number_simple "$response" "latitude")
+    lon=$(json_number_simple "$response" "longitude")
+    isp=$(printf '%s' "$response" | /usr/bin/sed -nE 's/.*"connection"[[:space:]]*:[[:space:]]*\{[^}]*"isp"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | /usr/bin/head -n 1)
+    asn=$(printf '%s' "$response" | /usr/bin/sed -nE 's/.*"connection"[[:space:]]*:[[:space:]]*\{[^}]*"asn"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' | /usr/bin/head -n 1)
+    timezone=$(printf '%s' "$response" | /usr/bin/sed -nE 's/.*"timezone"[[:space:]]*:[[:space:]]*\{[^}]*"id"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | /usr/bin/head -n 1)
+
+    [[ -z "$ip_type" ]] && ip_type="Unknown"
+    [[ -z "$country" ]] && country="Unavailable"
+    [[ -z "$region" ]] && region="Unavailable"
+    [[ -z "$city" ]] && city="Unavailable"
+    [[ -z "$isp" ]] && isp="Unavailable"
+    [[ -z "$asn" ]] && asn="Unavailable"
+    [[ -z "$timezone" ]] && timezone="Unavailable"
+    [[ -z "$lat" ]] && lat="Unavailable"
+    [[ -z "$lon" ]] && lon="Unavailable"
+
+    printf "%-19s %s\n" "IP address" "$target_ip"
+    printf "%-19s %s\n" "Type" "$ip_type"
+    printf "%-19s %s\n" "Country" "$country"
+    printf "%-19s %s\n" "Region" "$region"
+    printf "%-19s %s\n" "City" "$city"
+    printf "%-19s %s\n" "ISP" "$isp"
+    if [[ "$asn" != "Unavailable" ]]; then
+        printf "%-19s AS%s\n" "ASN" "$asn"
+    else
+        printf "%-19s %s\n" "ASN" "$asn"
+    fi
+    printf "%-19s %s\n" "Timezone" "$timezone"
+    printf "%-19s %s, %s\n" "Coordinates" "$lat" "$lon"
+    echo
+    echo -e "${GRAY}Geolocation is approximate and based on public IP data.${RESET}"
+    finish_inline_diagnostic
+}
+
 diagnostics_menu() {
     while true; do
         draw_diagnostics_fixed_screen
 
         local diagnostic_choice=""
         /bin/stty sane < /dev/tty 2>/dev/null || true
-        printf '\033[22;1H'
+        printf '\033[23;1H'
 
         IFS= read -r -s -n 1 diagnostic_choice < /dev/tty || diagnostic_choice=""
 
@@ -2370,6 +2460,7 @@ diagnostics_menu() {
             5) flush_dns ;;
             6) renew_dhcp ;;
             7) diagnostic_tcp_port_test ;;
+            8) diagnostic_ip_information ;;
             [Bb]|[Qq]|$'\e')
                 end_diagnostics_scroll_region
                 return
@@ -2377,8 +2468,8 @@ diagnostics_menu() {
             "")
                 ;;
             *)
-                printf '\033[23;1H\033[2K'
-                printf '\033[23;1H%bInvalid option.%b' "$RED" "$RESET"
+                printf '\033[24;1H\033[2K'
+                printf '\033[24;1H%bInvalid option.%b' "$RED" "$RESET"
                 /bin/sleep 0.5
                 ;;
         esac
